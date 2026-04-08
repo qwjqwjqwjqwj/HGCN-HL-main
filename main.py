@@ -256,7 +256,8 @@ elif FLAG == 4:
     lambdas = [0.5]    
     scales = [100] 
 
-(X_HSI,X_LiDAR, gt, class_num) = get_dataset(FLAG)
+(X_HSI,X_LiDAR, gt, class_num) = get_dataset(FLAG)  
+#X_HSI (166 100 63)  X_LiDAR (166 100) gt (166 100) class_num 7
 # no
 X_HSI = (X_HSI - float(np.min(X_HSI)))
 X_HSI = X_HSI/(np.max(X_HSI)-np.min(X_HSI))
