@@ -36,8 +36,8 @@ def get_HSI_LiDAR_data(name):
         class_num = 15
         n_input_size = 144
     elif name == 'Trento':
-        X_HSI = sio.loadmat('data\Trento\HSI.mat')['HSI']
-        X_LiDAR = sio.loadmat('data\Trento\LiDAR.mat')['LiDAR']
+        X_HSI = sio.loadmat('data\Trento\HSI.mat')['HSI']#      (166 100 63)
+        X_LiDAR = sio.loadmat('data\Trento\LiDAR.mat')['LiDAR']#      (166 100)
         Y = sio.loadmat('data\Trento\Label.mat')['Label']
         target_names = ['Healthy grass', 'Stressed grass', 'Synthetic grass'
                         ,'Trees', 'Soil', 'Water', 
