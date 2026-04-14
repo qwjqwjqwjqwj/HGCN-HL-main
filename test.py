@@ -225,10 +225,11 @@ class HGCN_Network(torch.nn.Module):
     
 #main
     
+    
 FLAG = 3 # 1:MUUFL, 2: Houston2013, 3:Trento, 4: Augsburg
 DataName = "MUUFL"
-max_iters = 10
-max_epochs = 1000
+max_iters = 2
+max_epochs = 2  #1000
 learning_rate = 0.0001
 weight_decay = 0.00001
 scales = [30]    
@@ -256,10 +257,128 @@ elif FLAG == 4:
     lambdas = [0.5]    
     scales = [100] 
 
-(X_HSI,X_LiDAR, gt, class_num) = get_dataset(FLAG)
-print('X_HSI:',X_HSI.shape)
-print('X_LiDAR:',X_LiDAR.shape)
+    
+FLAG = 3 # 1:MUUFL, 2: Houston2013, 3:Trento, 4: Augsburg
+DataName = "MUUFL"
+max_iters = 2
+max_epochs = 2  #1000
+learning_rate = 0.0001
+weight_decay = 0.00001
+scales = [30]    
+k = 1 #如果k=0 使用计算权重
+pca_n = 15
+sigma1 = 0.1
+sigma2 = 0.1
+if FLAG == 3:
+    DataName = "Trento"
+    pca_n = 10 #15
+    lambdas = [0.5] 
+    scales = [100]
+elif FLAG == 1:
+    DataName = "MUUFL"
+    pca_n = 10 #30      
+    lambdas = [0.5]    
+    scales = [100]  
+elif FLAG == 2:
+    DataName = "Houston2013"
+    pca_n = 25   #30
+    lambdas = [0.5]    
+    scales = [300]  
+elif FLAG == 4:
+    pca_n = 10   
+    lambdas = [0.5]    
+    scales = [100] 
 
-import sys
-print(f"Python 路径: {sys.executable}")
-print(f"当前环境: {sys.prefix}")
+(X_HSI,X_LiDAR, gt, class_num) = get_dataset(FLAG)  
+#X_HSI (166 100 63)  X_LiDAR (166 100)       gt 地面真值标签（每个像素点代表的地物标签  整数表示）(166 100)   class_num 6（6类地物）
+# no
+X_HSI = (X_HSI - float(np.min(X_HSI)))     # 平移：减去最小值
+X_HSI = X_HSI/(np.max(X_HSI)-np.min(X_HSI)) # 缩放：除以极差 所有数值在1以内 （min-max归一化）
+X_LiDAR = (X_LiDAR - float(np.min(X_LiDAR)))
+X_LiDAR = X_LiDAR/(np.max(X_LiDAR)-np.min(X_LiDAR))
+X_LiDAR = X_LiDAR[:,:, np.newaxis]#为 LiDAR 数据增加一个维度，形状从 (height, width) 变为 (height, width, 1)
+#
+H = obtain_H_from_HSI_with_LiDAR(X_HSI,X_LiDAR,scales)
+print(H.shape)
+LiDAR_bands = 1
+gt_flatten = np.reshape(gt, -1)
+h,w = X_HSI.shape[0],X_HSI.shape[1]
+X_HSI = np.reshape(X_HSI,(-1,X_HSI.shape[2]))
+
+pca = PCA(n_components=pca_n)  # 指定要保留的主成分数量
+X_HSI = pca.fit_transform(X_HSI)
+X_HSI = np.reshape(X_HSI, (h, w, -1))
+(height, width, bands_hsi) = X_HSI.shape
+X = np.concatenate([X_HSI,X_LiDAR],axis=2)#166 100 11
+bands = bands_hsi+1
+print(X.shape)
+
+
+# 将 NumPy 数组转换为 PyTorch 张量
+X = torch.from_numpy(X).to(device)
+X = X.type(torch.float32)
+
+# 初始化边权矩阵，该参数现有系统为可学习参数，也可设置为固定参数
+W_e = torch.diag(torch.ones(H.shape[1])).to(device)
+W_e = W_e.to_sparse_coo()
+# 将H矩阵转换为边索引的形式
+idx = np.where(H.T == 1)
+edge_index = np.stack([idx[1],idx[0]],axis=0)
+H = torch.tensor(edge_index,dtype=torch.long).to(device)
+print("H.shape:", H.shape)
+
+
+TVT_sets = CTrainValTest_Sets()
+TVT_sets.get_TrainValTest_Sets(4242,gt,class_num,0.1,0.1,'ratio')    
+
+# 使用已存在的训练和测试样本为了保证和其它论文一致
+if FLAG == 3:
+    TRLabel = sio.loadmat('data\Trento\TrLabel.mat')['TRLabel']
+    TELabel = sio.loadmat('data\Trento\TSLabel.mat')['TSLabel']
+    
+elif FLAG == 2:
+    TRLabel = sio.loadmat('data\Houston2013\TrLabel.mat')['Data']
+    TELabel = sio.loadmat('data\Houston2013\TeLabel.mat')['Data']
+    
+elif FLAG == 1:
+    TRLabel = sio.loadmat('data\MUUFL\TrLabel.mat')['Data']
+    TELabel = sio.loadmat('data\MUUFL\TeLabel.mat')['Data']
+    
+elif FLAG == 4:
+    TRLabel = sio.loadmat('data\Augsburg\TrLabel.mat')['Data']
+    TELabel = sio.loadmat('data\Augsburg\TeLabel.mat')['Data']
+
+TELabel_flatten = np.reshape(TELabel,[-1])
+TRLabel_flatten = np.reshape(TRLabel,[-1])
+idx = np.where(TRLabel_flatten!=0)
+TVT_sets.train_data_index = idx[0]
+TVT_sets.train_gt = torch.tensor(gt_flatten[idx[0]], dtype=torch.long).to(device) - 1
+
+TELabel_flatten = np.reshape(TELabel,[-1])
+idx = np.where(TELabel_flatten!=0)
+TVT_sets.test_data_index = idx[0]
+TVT_sets.test_gt = torch.tensor(gt_flatten[idx[0]], dtype=torch.long).to(device) - 1
+TVT_sets.val_data_index = TVT_sets.test_data_index
+TVT_sets.val_gt = TVT_sets.test_gt
+
+
+
+
+
+
+
+OA_ALL = []
+AA_ALL = []
+KPP_ALL = []
+AVG_ALL = []
+Train_Time_ALL=[]
+Test_Time_ALL=[]
+
+torch.cuda.empty_cache()
+W_e = W_e.type(torch.float32)
+X_torch = X.type(torch.float32)
+
+print("X_torch.shape:", X_torch.shape)
+
+net = HGCN_Network(height,width,bands,LiDAR_bands,class_num,W_e,0.5)
+net.to(device)

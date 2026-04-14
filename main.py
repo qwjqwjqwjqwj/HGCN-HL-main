@@ -13,15 +13,15 @@ from torch.nn import Parameter
 from torch_scatter import scatter
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
-class HGCN(MessagePassing):
+class HGCN(MessagePassing):#继承PyG 的消息传递基类，便于实现自定义图卷积
     def __init__(
         self,
-        in_channels: int,
-        out_channels: int,
+        in_channels: int,#输入特征维度128
+        out_channels: int,#输出特征维度128
         W:Tensor,
-        bias: bool = True,
+        bias: bool = True,#false
         W_learn = True,
-        **kwargs,#**kwargs 会收集 所有未被显式定义的关键字参数
+        **kwargs,   #**kwargs 会收集所有未被显式定义的关键字参数，打包成一个字典
     ):
         kwargs.setdefault('aggr', 'add')
         super().__init__(flow='source_to_target', node_dim=0, **kwargs)
@@ -35,9 +35,10 @@ class HGCN(MessagePassing):
         self.bias = bias
         self.W_learn = W_learn
         if self.bias == True:
+            
             self.b = Parameter(torch.empty(out_channels))
 
-    def forward(self, x: Tensor, hyperedge_index: Tensor):
+    def forward(self, x: Tensor, hyperedge_index: Tensor ):
         num_nodes = x.size(0)
         num_edges = int(hyperedge_index[1].max()) + 1
         hyperedge_weight = x.new_ones(num_edges)
@@ -59,7 +60,7 @@ class HGCN(MessagePassing):
         else:
             out = self.W_e.mm(out)        
         
-        out = self.propagate(hyperedge_index.flip([0]), x=out,  size=(num_edges, num_nodes))
+        out = self.propagate(hyperedge_index.flip([0]), x=out,  norm=D_e,size=(num_edges, num_nodes))
         # print('out1',out)
         out = D_v.view(-1,1) * out
         # print('out2',out)
@@ -166,24 +167,24 @@ class SSConv(nn.Module):
 
 class HGCN_Network(torch.nn.Module):
     def __init__(self, height: int, width: int, in_dim: int,in_dim_Lidar:int, class_num: int,W_e: torch.tensor,lam: float,
-                 output_dim=128, dropout=0.4):
+                 output_dim=128, dropout=0.4):#net = HGCN_Network(height,width,bands=11,LiDAR_bands=1,class_num=6,W_e(1062 1062)的稀疏矩阵对角线全部为1,lam=0.5)
 
         super(HGCN_Network, self).__init__()
         self.height = height
         self.width = width
-        self.in_dim = in_dim
-        self.in_dim_Lidar = in_dim_Lidar
-        self.class_num = class_num
-        self.output_dim = output_dim
-        self.W_e = W_e
-        self.dropout = dropout
-        self.lam = lam
+        self.in_dim = in_dim#11
+        self.in_dim_Lidar = in_dim_Lidar#1
+        self.class_num = class_num#6
+        self.output_dim = output_dim#128
+        self.W_e = W_e#(1062 1062)的稀疏矩阵对角线全部为1
+        self.dropout = dropout#0.4
+        self.lam = lam#0.5
 
         self.WMF_branch = nn.Sequential()
         self.WMF_branch.add_module('WMF_branch1',WMF(in_dim, output_dim))
         self.WMF_branch.add_module('WMF_branch2',WMF(output_dim, output_dim))
 
-        self.HGCN1 = HGCN(in_channels=output_dim, out_channels=output_dim, W=W_e, bias=False)
+        self.HGCN1 = HGCN(in_channels=output_dim, out_channels=output_dim, W=W_e, bias=False)#128 128
         self.HGCN2 = HGCN(in_channels=output_dim, out_channels=output_dim, W=W_e, bias=False)
 
         self.CNN_Branch = nn.Sequential()
@@ -197,15 +198,18 @@ class HGCN_Network(torch.nn.Module):
         
     def forward(self, X,H):
 
-        Z = torch.unsqueeze(X.permute([2, 0, 1]), 0)        
-        Z_WMF = self.WMF_branch(Z)
+        Z = torch.unsqueeze(X.permute([2, 0, 1]), 0)#       
+        Z_WMF = self.WMF_branch(Z)#Z_WMF.shape: torch.Size([1, 128, 166, 600])
+        #print("Z_WMF.shape:", Z_WMF.shape)
+        
         Z_C = self.CNN_Branch(Z_WMF)
         Z_C = torch.squeeze(Z_C, 0).permute([1, 2, 0]).reshape([self.height * self.width, -1])
 
-        Z_G = torch.squeeze(Z_WMF, 0).permute([1, 2, 0])
-        Z_G = self.dropout(Z_G)
-        Z_G = self.relu(Z_G)
-        Z_G = torch.reshape(Z_G,[self.height*self.width,Z_G.shape[2]])
+        Z_G = torch.squeeze(Z_WMF, 0).permute([1, 2, 0])#Z_G.shape: torch.Size([166, 600, 128])
+        Z_G = self.dropout(Z_G)#随机丢弃一些神经元的输出，以防止过拟合
+        Z_G = self.relu(Z_G)#对输入进行非线性变换，增加模型的表达能力
+        Z_G = torch.reshape(Z_G,[self.height*self.width,Z_G.shape[2]])#将Z_G的形状调整为 (99600, 128)，以便后续的图卷积操作
+        #print("Z_G.shape:", Z_G.shape)
         # x = self.batch_normalzation1(x)
         Z_G = self.HGCN1(Z_G, H)
         Z_G = self.dropout(Z_G)
@@ -227,8 +231,8 @@ class HGCN_Network(torch.nn.Module):
     
 FLAG = 3 # 1:MUUFL, 2: Houston2013, 3:Trento, 4: Augsburg
 DataName = "MUUFL"
-max_iters = 10
-max_epochs = 1000
+max_iters = 2
+max_epochs = 10  #1000
 learning_rate = 0.0001
 weight_decay = 0.00001
 scales = [30]    
@@ -257,15 +261,15 @@ elif FLAG == 4:
     scales = [100] 
 
 (X_HSI,X_LiDAR, gt, class_num) = get_dataset(FLAG)  
-#X_HSI (166 100 63)  X_LiDAR (166 100) gt (166 100) class_num 7
+#X_HSI (166 100 63)  X_LiDAR (166 100)       gt 地面真值标签（每个像素点代表的地物标签  整数表示）(166 100)   class_num 6（6类地物）
 # no
-X_HSI = (X_HSI - float(np.min(X_HSI)))
-X_HSI = X_HSI/(np.max(X_HSI)-np.min(X_HSI))
+X_HSI = (X_HSI - float(np.min(X_HSI)))     # 平移：减去最小值
+X_HSI = X_HSI/(np.max(X_HSI)-np.min(X_HSI)) # 缩放：除以极差 所有数值在1以内 （min-max归一化）
 X_LiDAR = (X_LiDAR - float(np.min(X_LiDAR)))
 X_LiDAR = X_LiDAR/(np.max(X_LiDAR)-np.min(X_LiDAR))
-X_LiDAR = X_LiDAR[:,:, np.newaxis]
+X_LiDAR = X_LiDAR[:,:, np.newaxis]#为 LiDAR 数据增加一个维度，形状从 (height, width) 变为 (height, width, 1)
 #
-H = obtain_H_from_HSI_with_LiDAR(X_HSI,X_LiDAR,scales)
+H = obtain_H_from_HSI_with_LiDAR(X_HSI,X_LiDAR,scales)#H.shape: (99600, 1062)
 print(H.shape)
 LiDAR_bands = 1
 gt_flatten = np.reshape(gt, -1)
@@ -276,7 +280,7 @@ pca = PCA(n_components=pca_n)  # 指定要保留的主成分数量
 X_HSI = pca.fit_transform(X_HSI)
 X_HSI = np.reshape(X_HSI, (h, w, -1))
 (height, width, bands_hsi) = X_HSI.shape
-X = np.concatenate([X_HSI,X_LiDAR],axis=2)
+X = np.concatenate([X_HSI,X_LiDAR],axis=2)#166 100 11
 bands = bands_hsi+1
 
 # 将 NumPy 数组转换为 PyTorch 张量
@@ -284,8 +288,8 @@ X = torch.from_numpy(X).to(device)
 X = X.type(torch.float32)
 
 # 初始化边权矩阵，该参数现有系统为可学习参数，也可设置为固定参数
-W_e = torch.diag(torch.ones(H.shape[1])).to(device)
-W_e = W_e.to_sparse_coo()
+W_e = torch.diag(torch.ones(H.shape[1])).to(device)#(1062 1062)的对角矩阵，初始值为1
+W_e = W_e.to_sparse_coo()#将稠密矩阵转换为稀疏 COO 格式，非零元素的值和位置被存储在两个张量中：values 和 indices。values 张量包含非零元素的值，indices 张量包含这些元素在原始矩阵中的位置（行索引和列索引）
 # 将H矩阵转换为边索引的形式
 idx = np.where(H.T == 1)
 edge_index = np.stack([idx[1],idx[0]],axis=0)
@@ -377,7 +381,7 @@ for lam in lambdas:
         for i in range(max_epochs):
             # network forward
             optimizer.zero_grad()
-            output= net(X_torch,H)
+            output= net(X_torch,H)#X_torch (166 100 11) H.shape: torch.Size([2, 199200])
             output_train = output[TVT_sets.train_data_index]
             loss = cal_loss(output_train, TVT_sets.train_gt)
             loss.backward()
@@ -408,27 +412,31 @@ for lam in lambdas:
         torch.cuda.empty_cache()
         
         with torch.no_grad():
-            net.load_state_dict(torch.load("model\\"+str(DataName)+str(id)+"model.pt"))
-            net.eval()
-            tic_test = time.time()
-            output= net(X_torch,H)
-            toc_test = time.time()
-            Test_Time_ALL.append(toc_test-tic_test)
-            
-            # performance for classification
-            output_test = output[TVT_sets.test_data_index]
-            # loss_val = 0 #cal_loss(output_test, TVT_sets.test_gt)
-            loss_val = cal_loss(output_test, TVT_sets.test_gt)
-            # testgtnumpy = TVT_sets.test_gt.detach().cpu().numpy()
-            resut_test.get_permance(TVT_sets.test_gt, output_test)
-            print("test_loss:{} \toa_test:{}".format(loss_val, resut_test.oa))
-            
-            # testOA, testAA, testkappa
-            OA_ALL.append(resut_test.oa)
-            AA_ALL.append(resut_test.aa)
-            KPP_ALL.append(resut_test.kappa)
-            AVG_ALL.append(resut_test.acc_perclass)
-            # print(net.HGCN1.W_e)            
+            try:
+                net.load_state_dict(torch.load("model\\"+str(DataName)+str(id)+"model.pt"))
+                net.eval()
+                tic_test = time.time()
+                output= net(X_torch,H)
+                toc_test = time.time()
+                Test_Time_ALL.append(toc_test-tic_test)
+                
+                # performance for classification
+                output_test = output[TVT_sets.test_data_index]
+                # loss_val = 0 #cal_loss(output_test, TVT_sets.test_gt)
+                loss_val = cal_loss(output_test, TVT_sets.test_gt)
+                # testgtnumpy = TVT_sets.test_gt.detach().cpu().numpy()
+                resut_test.get_permance(TVT_sets.test_gt, output_test)
+                print("test_loss:{} \toa_test:{}".format(loss_val, resut_test.oa))
+                
+                # testOA, testAA, testkappa
+                OA_ALL.append(resut_test.oa)
+                AA_ALL.append(resut_test.aa)
+                KPP_ALL.append(resut_test.kappa)
+                AVG_ALL.append(resut_test.acc_perclass)
+                # print(net.HGCN1.W_e)  
+                
+            except FileNotFoundError:
+                print(f"模型文件不存在，跳过测试")          
         torch.cuda.empty_cache()
         # del net
     OA_ALL = np.array(OA_ALL)

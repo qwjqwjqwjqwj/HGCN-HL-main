@@ -306,7 +306,7 @@ def get_felzenszwalb_Segs(Img, SLIC_scale):
         H_SLIC[idx, j] = 1
     return H_SLIC
 def obtain_H_from_HSI_with_LiDAR(HSI,LiDAR, scales):   
-    h,w = HSI.shape[0],HSI.shape[1]
+    h,w = HSI.shape[0],HSI.shape[1] #高度166宽度600 
     Img = np.reshape(HSI,(-1,HSI.shape[2]))
     
     pca = PCA(n_components=3)  # 指定要保留的主成分数量
@@ -332,7 +332,7 @@ def obtain_H_from_HSI_with_LiDAR(HSI,LiDAR, scales):
             index = 1
         else:
             H = np.concatenate([H,H_HSI_LiDAR],axis = 1)
-
+    print("H.shape:", H.shape)
     return H
 def getnestedgeindex(x:torch.tensor,block_size:int = 500,k:int = 50,startedgeid = 100):
     edge_index = []
