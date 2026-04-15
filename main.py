@@ -50,7 +50,7 @@ class HGCN(MessagePassing):#继承PyG 的消息传递基类，便于实现自定
         D_e = scatter(x.new_ones(hyperedge_index.size(1)), hyperedge_index[1],
                     dim=0, dim_size=num_edges, reduce='sum')#每个超边的度数 = 该超边包含的节点数量
         D_e = 1.0 / D_e
-        D_e[D_e == float("inf")] = 0
+        D_e[D_e == float("inf")] = 0#1
 
         out = self.propagate(hyperedge_index, x=x, norm=D_v, size=(num_nodes, num_edges))
         out = D_e.view(-1,1) * out
