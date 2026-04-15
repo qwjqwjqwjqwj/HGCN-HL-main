@@ -23,33 +23,32 @@ class HGCN(MessagePassing):#继承PyG 的消息传递基类，便于实现自定
         W_learn = True,
         **kwargs,   #**kwargs 会收集所有未被显式定义的关键字参数，打包成一个字典
     ):
-        kwargs.setdefault('aggr', 'add')
+        kwargs.setdefault('aggr', 'add')#如果 kwargs 中没有 aggr 这个键，就设置默认值为 'add'
         super().__init__(flow='source_to_target', node_dim=0, **kwargs)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.W_e = W
         if W_learn == True:
-            self.W_e = Parameter(torch.ones(W.shape[0]),requires_grad=True)
-        self.lin = Linear(in_channels, out_channels, bias=False,
-                              weight_initializer='glorot')
+            self.W_e = Parameter(torch.ones(W.shape[0]),requires_grad=True)#w_learn torch.Size([1062])创建一个全1的张量 requires_grad=True表示反向传播时会被更新
+        
+        self.lin = Linear(in_channels, out_channels, bias=False,weight_initializer='glorot')#output = input @ weight.T无偏置项，权重矩阵使用 Glorot 初始化方法进行初始化
         self.bias = bias
         self.W_learn = W_learn
         if self.bias == True:
-            
             self.b = Parameter(torch.empty(out_channels))
-
-    def forward(self, x: Tensor, hyperedge_index: Tensor ):
-        num_nodes = x.size(0)
-        num_edges = int(hyperedge_index[1].max()) + 1
-        hyperedge_weight = x.new_ones(num_edges)
-        x = self.lin(x)
-        D_v = scatter(hyperedge_weight[hyperedge_index[1]], hyperedge_index[0],
-                    dim=0, dim_size=num_nodes, reduce='sum')
-        D_v = D_v ** -0.5
-        D_v[D_v == float("inf")] = 0
+    def forward(self, x: Tensor, hyperedge_index: Tensor ):#X(99600, 128) hyperedge_index.shape: torch.Size([2, 199200]) 
+        print('x', x.shape , 'hyperedge_index', hyperedge_index.shape)
+        num_nodes = x.size(0)#99600
+        num_edges = int(hyperedge_index[1].max()) + 1#超边索引数量1062
+        hyperedge_weight = x.new_ones(num_edges)#全1的张量，长度为超边数量1062 与x数据类型一致
+        x = self.lin(x)#(99600, 128)线性变换
+        D_v = scatter(hyperedge_weight[hyperedge_index[1]], hyperedge_index[0],##hyperedge_weight[hyperedge_index[1]]199200个1，hyperedge_index[0] 199200个节点索引，scatter函数根据节点索引将对应的权重值进行聚合，
+                    dim=0, dim_size=num_nodes, reduce='sum')#99600个像素每个像素的度数 = 该像素在所有超边出现的数量
+        D_v = D_v ** -0.5#归一化
+        D_v[D_v == float("inf")] = 0#将无穷大值（inf）替换为0 处理节点度为0的情况
         # print('D_v',D_v)
         D_e = scatter(x.new_ones(hyperedge_index.size(1)), hyperedge_index[1],
-                    dim=0, dim_size=num_edges, reduce='sum')
+                    dim=0, dim_size=num_edges, reduce='sum')#每个超边的度数 = 该超边包含的节点数量
         D_e = 1.0 / D_e
         D_e[D_e == float("inf")] = 0
 
