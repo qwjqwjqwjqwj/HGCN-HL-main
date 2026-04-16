@@ -42,26 +42,29 @@ class HGCN(MessagePassing):#继承PyG 的消息传递基类，便于实现自定
         num_edges = int(hyperedge_index[1].max()) + 1#超边索引数量1062
         hyperedge_weight = x.new_ones(num_edges)#全1的张量，长度为超边数量1062 与x数据类型一致
         x = self.lin(x)#(99600, 128)线性变换
+        
         D_v = scatter(hyperedge_weight[hyperedge_index[1]], hyperedge_index[0],##hyperedge_weight[hyperedge_index[1]]199200个1，hyperedge_index[0] 199200个节点索引，scatter函数根据节点索引将对应的权重值进行聚合，
                     dim=0, dim_size=num_nodes, reduce='sum')#99600个像素每个像素的度数 = 该像素在所有超边出现的数量
         D_v = D_v ** -0.5#归一化
         D_v[D_v == float("inf")] = 0#将无穷大值（inf）替换为0 处理节点度为0的情况
-        # print('D_v',D_v)
+        
+
         D_e = scatter(x.new_ones(hyperedge_index.size(1)), hyperedge_index[1],
-                    dim=0, dim_size=num_edges, reduce='sum')#每个超边的度数 = 该超边包含的节点数量
+                    dim=0, dim_size=num_edges, reduce='sum')#每个超边的度数 = 该超边包含的像素数量
         D_e = 1.0 / D_e
         D_e[D_e == float("inf")] = 0#1
 
-        out = self.propagate(hyperedge_index, x=x, norm=D_v, size=(num_nodes, num_edges))
-        out = D_e.view(-1,1) * out
+        out = self.propagate(hyperedge_index, x=x, norm=D_v, size=(num_nodes, num_edges))#每个超像素块（超边）里所有像素的特征“融合”起来，再“分发”回给每个像素
+                                                                                            #把一个超像素里的所有像素的特征和求出来
+        out = D_e.view(-1,1) * out#每个像素的特征乘以该像素的度数的-0.5次方进行归一化
         if self.W_learn == True:
-            out = torch.mul(self.W_e.view(-1,1),out)
+            out = torch.mul(self.W_e.view(-1,1),out)#每个像素的特征乘以对应的可学习权重值进行调整
         else:
             out = self.W_e.mm(out)        
         
-        out = self.propagate(hyperedge_index.flip([0]), x=out,  norm=D_e,size=(num_edges, num_nodes))
+        out = self.propagate(hyperedge_index.flip([0]), x=out,  norm=D_e,size=(num_edges, num_nodes))#（99600）将超像素的特征进行“融合”后再“分发”回给每个像素 同一个超像素内的像素特征相同
         # print('out1',out)
-        out = D_v.view(-1,1) * out
+        out = D_v.view(-1,1) * out#每个像素的特征乘以该像素的度数的-0.5次方进行归一化
         # print('out2',out)
         if self.bias == True:
             out = out + self.b
@@ -202,7 +205,8 @@ class HGCN_Network(torch.nn.Module):
         #print("Z_WMF.shape:", Z_WMF.shape)
         
         Z_C = self.CNN_Branch(Z_WMF)
-        Z_C = torch.squeeze(Z_C, 0).permute([1, 2, 0]).reshape([self.height * self.width, -1])
+        Z_C = torch.squeeze(Z_C, 0).permute([1, 2, 0]).reshape([self.height * self.width, -1])#Z_C.shape: torch.Size([99600, 128])
+        #print("Z_C.shape:", Z_C.shape)
 
         Z_G = torch.squeeze(Z_WMF, 0).permute([1, 2, 0])#Z_G.shape: torch.Size([166, 600, 128])
         Z_G = self.dropout(Z_G)#随机丢弃一些神经元的输出，以防止过拟合
@@ -213,15 +217,17 @@ class HGCN_Network(torch.nn.Module):
         Z_G = self.HGCN1(Z_G, H)
         Z_G = self.dropout(Z_G)
         Z_G = self.relu(Z_G)
+        
         # x = self.batch_normalzation2(x)
-        Z_G = self.HGCN2(Z_G, H)
-
+        Z_G = self.HGCN2(Z_G, H)#Z_G.shape: torch.Size([99600, 128])
         Z_G = self.dropout(Z_G)
         Z_G = self.relu(Z_G)
+        #print("Z_G.shape:", Z_G.shape)
+        
         # x = x*(torch.exp(self.lambda1)) + Z_CNN*(1-torch.exp(self.lambda1))
-        Z = self.lam*Z_G + Z_C*(1-self.lam)
+        Z = self.lam*Z_G + Z_C*(1-self.lam)#特征融合相加
         # x = torch.cat((x, Z_CNN), 1)
-        out = self.Softmax_linear(Z)
+        out = self.Softmax_linear(Z)#99600 6预测综合结果
         return out
     
     
@@ -299,8 +305,8 @@ TVT_sets.get_TrainValTest_Sets(4242,gt,class_num,0.1,0.1,'ratio')
 
 # 使用已存在的训练和测试样本为了保证和其它论文一致
 if FLAG == 3:
-    TRLabel = sio.loadmat('data\Trento\TrLabel.mat')['TRLabel']
-    TELabel = sio.loadmat('data\Trento\TSLabel.mat')['TSLabel']
+    TRLabel = sio.loadmat('data\Trento\TrLabel.mat')['TRLabel']#预定义的训练样本标签
+    TELabel = sio.loadmat('data\Trento\TSLabel.mat')['TSLabel']##预定义的测试样本标签
     
 elif FLAG == 2:
     TRLabel = sio.loadmat('data\Houston2013\TrLabel.mat')['Data']
@@ -314,7 +320,7 @@ elif FLAG == 4:
     TRLabel = sio.loadmat('data\Augsburg\TrLabel.mat')['Data']
     TELabel = sio.loadmat('data\Augsburg\TeLabel.mat')['Data']
 
-TELabel_flatten = np.reshape(TELabel,[-1])
+TELabel_flatten = np.reshape(TELabel,[-1])#数据是二维的，所以将其展平为一维数组，方便后续处理
 TRLabel_flatten = np.reshape(TRLabel,[-1])
 idx = np.where(TRLabel_flatten!=0)
 TVT_sets.train_data_index = idx[0]
@@ -324,6 +330,7 @@ TELabel_flatten = np.reshape(TELabel,[-1])
 idx = np.where(TELabel_flatten!=0)
 TVT_sets.test_data_index = idx[0]
 TVT_sets.test_gt = torch.tensor(gt_flatten[idx[0]], dtype=torch.long).to(device) - 1
+
 TVT_sets.val_data_index = TVT_sets.test_data_index
 TVT_sets.val_gt = TVT_sets.test_gt
 
@@ -380,9 +387,9 @@ for lam in lambdas:
         for i in range(max_epochs):
             # network forward
             optimizer.zero_grad()
-            output= net(X_torch,H)#X_torch (166 100 11) H.shape: torch.Size([2, 199200])
-            output_train = output[TVT_sets.train_data_index]
-            loss = cal_loss(output_train, TVT_sets.train_gt)
+            output= net(X_torch,H)# 预测结果（99600，6）        X_torch (166 100 11) H.shape: torch.Size([2, 199200])
+            output_train = output[TVT_sets.train_data_index]#取出训练集的预测结果
+            loss = cal_loss(output_train, TVT_sets.train_gt)#计算损失
             loss.backward()
             optimizer.step()  # Does the update
             if i%10 == 0:

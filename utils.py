@@ -209,14 +209,14 @@ def get_TrainValTest_Sets(seed: int, gt: np.array, class_count: int, train_ratio
     return train_data_index,test_data_index,val_data_index, train_gt_map
 
 class CTrainValTest_Sets():
-    train_data_index    = []
-    test_data_index     = []
-    val_data_index      = []
+    train_data_index    = []#训练数据的位置
+    test_data_index     = []#测试数据的位置
+    val_data_index      = []#验证数据的位置
     train_gt_map        = []
     
-    train_gt            = []
-    val_gt              = []
-    test_gt             = []
+    train_gt            = []#训练集的答案
+    val_gt              = []#验证集答案  等于test_gt  
+    test_gt             = []#测试集的答案
 
     def get_TrainValTest_Sets(self, cur_seed,
             gt,class_num,train_ratio,val_ratio, samples_type):
